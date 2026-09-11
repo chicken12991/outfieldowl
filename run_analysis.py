@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from batted_balls import get_air_balls, get_player_id
 from fielders import add_catch_columns, DEFAULT_INFIELD
-from fielder_data import load_fielder_ability
+from fielder_data import load_fielder_ability, load_runner_times
 from optimizer import (optimize_positions, wall_distance,
                        per_ball_expected_runs, infield_catchable,
                        MODE_MIN_RUNS, MODE_PREVENT_HIT)
@@ -23,24 +23,24 @@ PLOTS_DIR = os.path.join(SCRIPT_DIR, 'plots')
 os.makedirs(PLOTS_DIR, exist_ok=True)
 START_DT, END_DT = "2026-03-26", "2026-07-11"
 
+# default outfield for command-line runs; the GUI passes its own picks
 PLAYERS = ['Andrew Pinckney', 'Jacob Young', 'Dylan Crews']
 OPTIMIZE_MODE = 'corners'   # 'corners' or 'all'
 CENTER_PLAYER = 'Jacob Young' if OPTIMIZE_MODE == 'corners' else None
 
 IMAGES_DIR = os.path.join(SCRIPT_DIR, 'images')
 
+# the full roster of selectable outfielders (the GUI lists these)
 PLAYER_IMAGES_BY_NAME = {
     'James Wood':  os.path.join(IMAGES_DIR, 'jameswood.png'),
     'Jacob Young': os.path.join(IMAGES_DIR, 'jacobyoung.png'),
     'Dylan Crews': os.path.join(IMAGES_DIR, 'dylancrews.png'),
     'Daylen Lile': os.path.join(IMAGES_DIR, 'daylenlile.png'),
+    'Andrew Pinckney': os.path.join(IMAGES_DIR, 'andrewPinckney.jpg'),
 }
 
 # ---------------------------------------------------------
-# SCORING MODES - the two things this program can optimize for.
-# these are the same MODE_* constants optimizer.py scores against; a
-# future GUI just needs to hand one of them to run(), same as the
-# keyboard prompt below does.
+# SCORING MODES
 # ---------------------------------------------------------
 
 MODE_LABELS = {
@@ -61,10 +61,8 @@ MODE_FILE_SUFFIX = {
 
 
 def prompt_for_mode():
-    """keyboard entry point for choosing a mode. this is the ONLY place
-    in the program that touches input() - a GUI replaces this single
-    function with e.g. a radio-button callback that returns the same
-    MODE_* constant, and calls run() exactly the same way."""
+    """keyboard entry point for choosing a mode (CLI only - the GUI
+    passes a MODE_* constant straight into run/analyze_batter)."""
     print("\nchoose an optimization mode:")
     print(f"  1) {MODE_LABELS[MODE_MIN_RUNS]}")
     print(f"  2) {MODE_LABELS[MODE_PREVENT_HIT]}")
@@ -72,14 +70,27 @@ def prompt_for_mode():
     return MODE_PREVENT_HIT if choice == '2' else MODE_MIN_RUNS
 
 
-def analyze_batter(last_name, first_name, mode, abilities):
-    """one batter = one full analysis + saved plot, scored under 'mode'."""
+def analyze_batter(last_name, first_name, mode, abilities,
+                   players=None, center_player=None):
+    """one batter = one full analysis + saved plot, scored under 'mode'.
+    players / center_player default to the module-level config so the
+    CLI keeps working; the GUI passes its own selections.
+    returns the saved plot's path (or None if skipped)."""
+    if players is None:
+        players = PLAYERS
+    if center_player is None and OPTIMIZE_MODE == 'corners' \
+            and CENTER_PLAYER in players:
+        center_player = CENTER_PLAYER
+
     batter_id = get_player_id(last_name, first_name)
     air = get_air_balls(batter_id, start_dt=START_DT, end_dt=END_DT)
 
     if len(air) == 0:
         print(f"no air balls found for {first_name} {last_name}, skipping")
-        return
+        return None
+
+    # THIS batter's speed out of the box - the race is against them
+    runner_times = load_runner_times(last_name, first_name, year=2026)
 
     # flag balls the outfield doesn't have to worry about
     spray_angle = np.degrees(np.arctan2(air['landing_x'],
@@ -93,7 +104,8 @@ def analyze_batter(last_name, first_name, mode, abilities):
 
     print(f"\nballs going into optimizer: {len(of_air)}")
     best_fielders, assignment, score, coverage = optimize_positions(
-        of_air, PLAYERS, abilities, center_player=CENTER_PLAYER, mode=mode)
+        of_air, players, abilities, center_player=center_player,
+        mode=mode, runner_times=runner_times)
 
     score_label = MODE_SCORE_LABELS[mode]
     print(f"--- {first_name.title()} {last_name.title()}: "
@@ -110,19 +122,21 @@ def analyze_batter(last_name, first_name, mode, abilities):
     all_balls = add_catch_columns(all_balls, fielders=best_fielders,
                                   abilities=abilities_by_pos)
     all_balls['exp_runs'] = per_ball_expected_runs(
-        all_balls, best_fielders, abilities_by_pos, mode=mode)
+        all_balls, best_fielders, abilities_by_pos, mode=mode,
+        runner_times=runner_times)
     all_balls.loc[all_balls['over_fence'], 'catch_prob'] = 0
     all_balls.loc[all_balls['over_fence'], 'exp_runs'] = 0
     all_balls.loc[all_balls['infield_out'], 'exp_runs'] = 0
 
-    # plot, saved as <firstlast>_<mode>_plot.png, no popup window in batch
+    # plot, saved to plots/, no popup window
     player_names = {pos: assignment[pos] for pos in best_fielders}
     player_images = {pos: PLAYER_IMAGES_BY_NAME.get(assignment[pos])
                      for pos in best_fielders}
     suffix = MODE_FILE_SUFFIX[mode]
-    save_path = os.path.join(
-        PLOTS_DIR,
-        f"{first_name}{last_name}_{suffix}_plot.png".replace('.', ''))
+    # keep only safe characters in the name part, then add the extension
+    stem = f"{first_name}{last_name}_{suffix}_plot"
+    stem = ''.join(c for c in stem if c.isalnum() or c == '_')
+    save_path = os.path.join(PLOTS_DIR, stem + ".png")
 
     plot_alignment(all_balls, best_fielders,
                    title=f"{first_name.title()} {last_name.title()} "
@@ -135,12 +149,11 @@ def analyze_batter(last_name, first_name, mode, abilities):
                    player_names=player_names,
                    save_path=save_path,
                    show=False)
+    return save_path
 
 
 def run(mode):
-    """run the whole lineup under the given scoring mode. this is the
-    entry point a GUI should call directly, passing MODE_MIN_RUNS or
-    MODE_PREVENT_HIT - it never touches input()."""
+    """run the whole lineup under the given scoring mode (CLI path)."""
     with open(LINEUP_FILE) as f:
         lineup = [line.split() for line in f if line.strip()]
     print(f"lineup: {len(lineup)} batters")
@@ -156,9 +169,11 @@ def run(mode):
         print(f"\n{'='*55}\n{first_name.title()} {last_name.title()}"
               f"\n{'='*55}")
         try:
-            analyze_batter(last_name, first_name, mode, abilities)
+            analyze_batter(last_name, first_name, mode, abilities,
+                           players=PLAYERS, center_player=CENTER_PLAYER)
         except Exception as e:
             print(f"FAILED for {first_name} {last_name}: {e}")
+            print(f"  name repr: {first_name!r} {last_name!r}")
             continue
 
     print("\ndone - plots saved in", PLOTS_DIR)

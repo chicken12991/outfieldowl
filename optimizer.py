@@ -19,11 +19,16 @@ DAMAGE = {'single': 0.47, 'double': 0.77, 'triple': 1.05}
 ROLL_RETENTION = 0.55   # fraction of horizontal speed kept after the bounce
 ROLL_FRICTION = 12.0    # deceleration on grass, ft/s^2
 
-# the race model: defense vs a FAST (90th percentile) baserunner
+# the race model: throw side
 THROW_SPEED = 130.0     # outfield throw, ft/s (~88 mph)
 TRANSFER_TIME = 0.9     # seconds: pickup -> ball leaves the hand
-RUNNER_2B_TIME = 7.9    # fast runner, contact -> second base, seconds
-RUNNER_3B_TIME = 11.4   # fast runner, contact -> third base, seconds
+
+# FALLBACK runner times (contact -> base). normally the actual
+# batter's times are computed from their statcast sprint_speed +
+# hp_to_1b (fielder_data.load_runner_times) and passed in; these
+# only apply when no runner_times are provided.
+RUNNER_2B_TIME = 8.3    # league-ish runner, contact -> second, seconds
+RUNNER_3B_TIME = 12.3   # league-ish runner, contact -> third, seconds
 
 # minimum catch prob for a FIXED infielder to count as recording an out
 INFIELD_OUT_THRESHOLD = 75
@@ -215,35 +220,42 @@ _TIER_RUNS = np.array([0.0, DAMAGE['single'], DAMAGE['double'],
                        DAMAGE['triple']])
 
 
-def race_tier(pickup, throw_2b, throw_3b):
+def race_tier(pickup, throw_2b, throw_3b, runner_times=None):
     """hit tier from the race: when does the ball reach each base
-    vs a fast runner?
+    vs THIS batter running?
       ball at 2B before the runner -> single
       else ball at 3B before the runner -> double
-      else -> triple"""
+      else -> triple
+    runner_times = (t_2b, t_3b) for the actual batter; falls back to
+    the league-ish constants if not given."""
+    if runner_times is None:
+        runner_2b, runner_3b = RUNNER_2B_TIME, RUNNER_3B_TIME
+    else:
+        runner_2b, runner_3b = runner_times
+
     t_at_2b = pickup + TRANSFER_TIME + throw_2b
     t_at_3b = pickup + TRANSFER_TIME + throw_3b
 
     tier = np.full(pickup.shape, 3, dtype=int)
-    tier = np.where(t_at_3b <= RUNNER_3B_TIME, 2, tier)
-    tier = np.where(t_at_2b <= RUNNER_2B_TIME, 1, tier)
+    tier = np.where(t_at_3b <= runner_3b, 2, tier)
+    tier = np.where(t_at_2b <= runner_2b, 1, tier)
     return tier
 
 
 def expected_runs(prob_cov, pickup_cov, throw_2b, throw_3b,
-                  mode=MODE_MIN_RUNS):
+                  mode=MODE_MIN_RUNS, runner_times=None):
     """expected runs allowed, summed over balls.
     in MODE_PREVENT_HIT the race model is irrelevant - an uncaught ball
     counts as 1 regardless of what it would turn into."""
     if mode == MODE_PREVENT_HIT:
         return (1 - prob_cov / 100.0).sum(axis=-1)
-    tier = race_tier(pickup_cov, throw_2b, throw_3b)
+    tier = race_tier(pickup_cov, throw_2b, throw_3b, runner_times)
     damage = _TIER_RUNS[tier]
     return ((1 - prob_cov / 100.0) * damage).sum(axis=-1)
 
 
 def per_ball_expected_runs(air, fielders, abilities=None,
-                           mode=MODE_MIN_RUNS):
+                           mode=MODE_MIN_RUNS, runner_times=None):
     """expected runs (or, in MODE_PREVENT_HIT, expected hits) allowed on
     EACH ball at a given alignment."""
     abilities = abilities or {}
@@ -271,7 +283,7 @@ def per_ball_expected_runs(air, fielders, abilities=None,
     if mode == MODE_PREVENT_HIT:
         return 1 - prob_cov / 100.0
 
-    tier = race_tier(pickup_cov, throw_2b, throw_3b)
+    tier = race_tier(pickup_cov, throw_2b, throw_3b, runner_times)
     damage = _TIER_RUNS[tier]
     return (1 - prob_cov / 100.0) * damage
 
@@ -281,10 +293,10 @@ def per_ball_expected_runs(air, fielders, abilities=None,
 # ---------------------------------------------------------
 
 def refine_positions(chosen_idx, prob_list, pickup_list,
-                     throw_2b, throw_3b, mode=MODE_MIN_RUNS):
+                     throw_2b, throw_3b, mode=MODE_MIN_RUNS,
+                     runner_times=None):
     """local search: move each fielder to the grid point that most
-    reduces the score (expected runs, or expected hits under
-    MODE_PREVENT_HIT), others fixed. each fielder has his own
+    reduces the score, others fixed. each fielder has his own
     catch-prob matrix AND his own pickup-time matrix."""
     chosen = list(chosen_idx)
     n_balls = throw_2b.shape[0]
@@ -306,13 +318,13 @@ def refine_positions(chosen_idx, prob_list, pickup_list,
             cand_pick = np.minimum(pickup_list[i], base_pick[None, :])
             scores = expected_runs(cand_prob, cand_pick,
                                    throw_2b[None, :], throw_3b[None, :],
-                                   mode)
+                                   mode, runner_times)
 
             best = int(np.argmin(scores))
             current = expected_runs(
                 np.maximum(prob_list[i][chosen[i]], base_prob),
                 np.minimum(pickup_list[i][chosen[i]], base_pick),
-                throw_2b, throw_3b, mode
+                throw_2b, throw_3b, mode, runner_times
             )
             if scores[best] < current - 1e-9:
                 chosen[i] = best
@@ -322,7 +334,7 @@ def refine_positions(chosen_idx, prob_list, pickup_list,
 
 def _optimize_one_assignment(air, player_order, abilities, points,
                              land_dists, race, n_restarts, rng,
-                             mode=MODE_MIN_RUNS):
+                             mode=MODE_MIN_RUNS, runner_times=None):
     """optimize positions for one player->slot assignment."""
     sx, sy, t_stop, throw_2b, throw_3b = race
     prob_list, pickup_list = [], []
@@ -342,7 +354,8 @@ def _optimize_one_assignment(air, player_order, abilities, points,
         cand_prob = np.maximum(prob_list[i], cov_prob[None, :])
         cand_pick = np.minimum(pickup_list[i], cov_pick[None, :])
         scores = expected_runs(cand_prob, cand_pick,
-                               throw_2b[None, :], throw_3b[None, :], mode)
+                               throw_2b[None, :], throw_3b[None, :],
+                               mode, runner_times)
         idx = int(np.argmin(scores))
         chosen.append(idx)
         cov_prob = np.maximum(cov_prob, prob_list[i][idx])
@@ -356,12 +369,13 @@ def _optimize_one_assignment(air, player_order, abilities, points,
     pbar = tqdm(starts, desc=" / ".join(player_order), leave=False)
     for start in pbar:
         climbed = refine_positions(start, prob_list, pickup_list,
-                                   throw_2b, throw_3b, mode)
+                                   throw_2b, throw_3b, mode, runner_times)
         cp = np.maximum.reduce(
             [prob_list[i][climbed[i]] for i in range(n_f)])
         ck = np.minimum.reduce(
             [pickup_list[i][climbed[i]] for i in range(n_f)])
-        score = expected_runs(cp, ck, throw_2b, throw_3b, mode)
+        score = expected_runs(cp, ck, throw_2b, throw_3b,
+                              mode, runner_times)
         if score < best_score:
             best_score, best_chosen = score, climbed
         pbar.set_postfix(best=f"{best_score:.2f}")
@@ -371,11 +385,12 @@ def _optimize_one_assignment(air, player_order, abilities, points,
 
 def optimize_positions(air, players, abilities, center_player=None,
                        spacing=GRID_SPACING, n_restarts=10, seed=0,
-                       mode=MODE_MIN_RUNS):
+                       mode=MODE_MIN_RUNS, runner_times=None):
     """find the best (assignment, positions) for the given players.
     center_player set -> 'corners' mode; None -> 'all' mode.
-    mode -> MODE_MIN_RUNS (minimize expected runs allowed) or
-    MODE_PREVENT_HIT (maximize catches, ignoring what a miss turns into).
+    mode -> MODE_MIN_RUNS or MODE_PREVENT_HIT.
+    runner_times -> (t_2b, t_3b) for the ACTUAL batter at the plate
+    (from fielder_data.load_runner_times); None = fallback constants.
     returns (fielders_dict, assignment_dict, score, coverage)"""
     rng = np.random.default_rng(seed)
     points = build_grid(spacing)
@@ -395,7 +410,7 @@ def optimize_positions(air, players, abilities, center_player=None,
     for order in orderings:
         chosen, score = _optimize_one_assignment(
             air, order, abilities, points, land_dists, race,
-            n_restarts, rng, mode)
+            n_restarts, rng, mode, runner_times)
         if best is None or score < best[2]:
             best = (order, chosen, score)
 
