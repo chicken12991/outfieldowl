@@ -1,0 +1,126 @@
+[
+ {
+  "name": "Angel Stadium of Anaheim",
+  "key": "angels"
+ },
+ {
+  "name": "Busch Stadium",
+  "key": "cardinals"
+ },
+ {
+  "name": "Chase Field",
+  "key": "diamondbacks"
+ },
+ {
+  "name": "Citi Field",
+  "key": "mets"
+ },
+ {
+  "name": "Citizens Bank Park",
+  "key": "phillies"
+ },
+ {
+  "name": "Comerica Park",
+  "key": "tigers"
+ },
+ {
+  "name": "Coors Field",
+  "key": "rockies"
+ },
+ {
+  "name": "Dodger Stadium",
+  "key": "dodgers"
+ },
+ {
+  "name": "Fenway Park",
+  "key": "red_sox"
+ },
+ {
+  "name": "Generic park",
+  "key": "generic"
+ },
+ {
+  "name": "Great American Ballpark",
+  "key": "reds"
+ },
+ {
+  "name": "Guaranteed Rate Field",
+  "key": "white_sox"
+ },
+ {
+  "name": "Kauffman Stadium",
+  "key": "royals"
+ },
+ {
+  "name": "Marlins Park",
+  "key": "marlins"
+ },
+ {
+  "name": "Miller Park",
+  "key": "brewers"
+ },
+ {
+  "name": "Minute Maid Park",
+  "key": "astros"
+ },
+ {
+  "name": "Nationals Park",
+  "key": "nationals"
+ },
+ {
+  "name": "Oakland-Alameda County Coliseum",
+  "key": "athletics"
+ },
+ {
+  "name": "Oracle Park",
+  "key": "giants"
+ },
+ {
+  "name": "Oriole Park at Camden Yards",
+  "key": "orioles"
+ },
+ {
+  "name": "PETCO Park",
+  "key": "padres"
+ },
+ {
+  "name": "PNC Park",
+  "key": "pirates"
+ },
+ {
+  "name": "Progressive Field",
+  "key": "indians"
+ },
+ {
+  "name": "Rangers Ballpark in Arlington",
+  "key": "rangers"
+ },
+ {
+  "name": "Rogers Centre",
+  "key": "blue_jays"
+ },
+ {
+  "name": "T-Mobile Park",
+  "key": "mariners"
+ },
+ {
+  "name": "Target Field",
+  "key": "twins"
+ },
+ {
+  "name": "Tropicana Field",
+  "key": "rays"
+ },
+ {
+  "name": "Truist Park",
+  "key": "braves"
+ },
+ {
+  "name": "Wrigley Field",
+  "key": "cubs"
+ },
+ {
+  "name": "Yankee Stadium",
+  "key": "yankees"
+ }
+]
