@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OutfieldOwl</title>
+<style>
+  :root {
+    --navy: #14225a;
+    --red: #ab0003;
+    --bg: #f4f5f8;
+    --card: #ffffff;
+    --ink: #1b1d24;
+    --muted: #6b7080;
+    --line: #d9dce4;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  header {
+    background: var(--navy);
+    color: #fff;
+    padding: 18px 24px;
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 24px; letter-spacing: 0.5px; }
+  header p { margin: 0; opacity: 0.8; font-size: 14px; }
+  .badge {
+    margin-left: auto;
+    background: #ffd34d;
+    color: #3a2c00;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 999px;
+  }
+  main {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 20px;
+    padding: 20px;
+    max-width: 1300px;
+    margin: 0 auto;
+  }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .controls { display: flex; flex-direction: column; gap: 18px; }
+  .title {
+    display: block;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .toggle {
+    display: flex;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .toggle button {
+    flex: 1;
+    padding: 8px;
+    border: 0;
+    background: #fff;
+    font: inherit;
+    cursor: pointer;
+  }
+  .toggle button.on { background: var(--navy); color: #fff; }
+  .toggle button:disabled { color: #9a9a9a; background: #f1f1f1; cursor: not-allowed; }
+  .toggle small { display: block; font-size: 10px; }
+  .search { position: relative; }
+  .search input {
+    width: 100%;
+    padding: 9px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font: inherit;
+  }
+  .search ul {
+    position: absolute;
+    z-index: 5;
+    left: 0;
+    right: 0;
+    top: 100%;
+    margin: 4px 0 0;
+    padding: 4px 0;
+    list-style: none;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+    max-height: 280px;
+    overflow: auto;
+  }
+  .search li { padding: 7px 10px; cursor: pointer; }
+  .search li.active, .search li:hover { background: #e9edf8; }
+  .search li.empty { color: var(--muted); cursor: default; background: none; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .checks label, .radios label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+  }
+  select {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font: inherit;
+    background: #fff;
+  }
+  #go {
+    padding: 11px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--red);
+    color: #fff;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  #go:disabled { background: #c9c9c9; cursor: not-allowed; }
+  .result {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    min-height: 400px;
+  }
+  .result img { max-width: 100%; height: auto; border-radius: 6px; }
+  .notice {
+    width: 100%;
+    background: #fff6d6;
+    border: 1px solid #f0d77a;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 14px;
+  }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>OutfieldOwl</h1>
+  <p>Outfield positioning for the Nationals, built on Statcast data</p>
+  <span class="badge">Preview · not connected yet</span>
+</header>
+
+<main>
+  <section class="card controls">
+    <div>
+      <span class="title">Look up a</span>
+      <div class="toggle">
+        <button id="type-batter" class="on" type="button">Batter</button>
+        <button id="type-pitcher" type="button" disabled>Pitcher<small>coming soon</small></button>
+      </div>
+    </div>
+
+    <div class="search">
+      <label class="title" for="player">Player</label>
+      <input id="player" type="text" placeholder="Start typing a first or last name" autocomplete="off">
+      <ul id="suggestions" class="hidden" role="listbox"></ul>
+      <div class="hint">Sample list for now. The full league list comes later.</div>
+    </div>
+
+    <div>
+      <span class="title">Outfielders <span id="of-count">(3 of 3)</span></span>
+      <div class="checks" id="outfielders"></div>
+    </div>
+
+    <div>
+      <label class="title" for="park">Ballpark</label>
+      <select id="park"><option>Loading parks...</option></select>
+    </div>
+
+    <div>
+      <span class="title">Scoring mode</span>
+      <div class="radios">
+        <label><input type="radio" name="mode" value="min_runs" checked> Minimize expected runs</label>
+        <label><input type="radio" name="mode" value="prevent_hit"> Prevent hits at all costs</label>
+      </div>
+    </div>
+
+    <button id="go" type="button" disabled>Show graphic</button>
+  </section>
+
+  <section class="card result">
+    <div id="notice" class="notice hidden"></div>
+    <img id="preview" alt="Ballpark preview">
+  </section>
+</main>
+
+<script>
+  // ---------------- settings ----------------
+  const OUTFIELDERS = ["James Wood", "Jacob Young", "Dylan Crews",
+                       "Daylen Lile", "Andrew Pinckney"];
+  const DEFAULT_OF = ["Andrew Pinckney", "Jacob Young", "Dylan Crews"];
+  const DEFAULT_PARK = "nationals";
+
+  // sample list until the real league-wide players.json exists
+  const SAMPLE_PLAYERS = [
+    "Kyle Schwarber", "Trea Turner", "Bryce Harper", "Alec Bohm",
+    "Luis Arráez", "Brandon Marsh", "J.T. Realmuto", "Bryson Stott",
+    "Justin Crawford", "James Wood", "CJ Abrams", "Aaron Judge",
+    "Shohei Ohtani", "Juan Soto"
+  ];
+
+  // ---------------- elements ----------------
+  const input = document.getElementById("player");
+  const list = document.getElementById("suggestions");
+  const ofBox = document.getElementById("outfielders");
+  const parkSel = document.getElementById("park");
+  const preview = document.getElementById("preview");
+  const notice = document.getElementById("notice");
+  const go = document.getElementById("go");
+
+  // ---------------- name matching ----------------
+  // lowercase, no accents, no periods/apostrophes: "J.T. Realmuto" -> "jt realmuto"
+  function plain(s) {
+    return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+            .replace(/[.']/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+  }
+
+  const players = SAMPLE_PLAYERS.map(name => {
+    const parts = plain(name).split(" ");
+    return { name, first: parts[0], last: parts.slice(1).join(" "),
+             full: parts.join(" ") };
+  }).sort((a, b) => a.last.localeCompare(b.last));
+
+  // first OR last name starts with what was typed; with a space typed,
+  // the full name can match too ("kyle sch")
+  function matchPlayers(q) {
+    q = plain(q);
+    if (!q) return [];
+    return players.filter(p =>
+      p.first.startsWith(q) || p.last.startsWith(q) ||
+      (q.includes(" ") && p.full.startsWith(q))
+    ).slice(0, 10);
+  }
+
+  // ---------------- search dropdown ----------------
+  let selected = null;
+  let matches = [];
+  let active = -1;
+
+  function renderList() {
+    list.innerHTML = "";
+    if (!input.value.trim()) { list.classList.add("hidden"); return; }
+    if (!matches.length) {
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = "No players found";
+      list.appendChild(li);
+    }
+    matches.forEach((p, i) => {
+      const li = document.createElement("li");
+      li.textContent = p.name;
+      li.setAttribute("role", "option");
+      if (i === active) li.classList.add("active");
+      li.addEventListener("mousedown", e => { e.preventDefault(); choose(p); });
+      list.appendChild(li);
+    });
+    list.classList.remove("hidden");
+  }
+
+  function choose(p) {
+    selected = p;
+    input.value = p.name;
+    list.classList.add("hidden");
+    updateGo();
+  }
+
+  input.addEventListener("input", () => {
+    selected = null;
+    matches = matchPlayers(input.value);
+    active = matches.length ? 0 : -1;
+    renderList();
+    updateGo();
+  });
+
+  input.addEventListener("keydown", e => {
+    if (list.classList.contains("hidden")) return;
+    if (e.key === "ArrowDown" && matches.length) {
+      e.preventDefault();
+      active = (active + 1) % matches.length;
+      renderList();
+    } else if (e.key === "ArrowUp" && matches.length) {
+      e.preventDefault();
+      active = (active - 1 + matches.length) % matches.length;
+      renderList();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (active >= 0) choose(matches[active]);
+    } else if (e.key === "Escape") {
+      list.classList.add("hidden");
+    }
+  });
+
+  input.addEventListener("blur", () => list.classList.add("hidden"));
+  input.addEventListener("focus", () => {
+    if (input.value.trim() && !selected) {
+      matches = matchPlayers(input.value);
+      renderList();
+    }
+  });
+
+  // ---------------- outfielders (exactly 3) ----------------
+  OUTFIELDERS.forEach(name => {
+    const label = document.createElement("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.value = name;
+    box.checked = DEFAULT_OF.includes(name);
+    box.addEventListener("change", updateOF);
+    label.append(box, " " + name);
+    ofBox.appendChild(label);
+  });
+
+  function pickedOF() {
+    return [...ofBox.querySelectorAll("input:checked")].map(b => b.value);
+  }
+
+  function updateOF() {
+    const n = pickedOF().length;
+    document.getElementById("of-count").textContent = `(${n} of 3)`;
+    ofBox.querySelectorAll("input").forEach(b => {
+      b.disabled = !b.checked && n >= 3;
+    });
+    updateGo();
+  }
+
+  // ---------------- ballparks ----------------
+  function showPark() {
+    preview.classList.remove("hidden");
+    preview.src = `parks/${parkSel.value}.png`;
+    preview.alt = parkSel.options[parkSel.selectedIndex].text + " preview";
+  }
+
+  preview.addEventListener("error", () => preview.classList.add("hidden"));
+  parkSel.addEventListener("change", showPark);
+
+  fetch("parks.json")
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(parks => {
+      parkSel.innerHTML = "";
+      parks.forEach(p => {
+        const opt = document.createElement("option");
+        opt.value = p.key;
+        opt.textContent = p.name;
+        if (p.key === DEFAULT_PARK) opt.selected = true;
+        parkSel.appendChild(opt);
+      });
+      showPark();
+    })
+    .catch(() => {
+      parkSel.innerHTML = '<option value="nationals">Nationals Park</option>';
+      showNotice("Couldn't load the park list. If you opened this file " +
+                 "straight from your computer, view it on GitHub Pages instead.");
+      showPark();
+    });
+
+  // ---------------- show graphic (not connected yet) ----------------
+  function showNotice(text) {
+    notice.textContent = text;
+    notice.classList.remove("hidden");
+  }
+
+  function updateGo() {
+    go.disabled = !(selected && pickedOF().length === 3);
+  }
+
+  go.addEventListener("click", () => {
+    const park = parkSel.options[parkSel.selectedIndex].text;
+    const mode = document.querySelector('input[name="mode"]:checked')
+                   .parentElement.textContent.trim().toLowerCase();
+    showNotice(`The cloud side isn't connected yet. Once it is, ` +
+               `${selected.name}'s graphic for ${park} (${mode}) with ` +
+               `${pickedOF().join(", ")} will show up here.`);
+  });
+
+  updateOF();
+</script>
+</body>
+</html>
