@@ -1,0 +1,9 @@
+# exact library versions from the working laptop setup (Python 3.14).
+# the container installs exactly these, so it matches the laptop.
+matplotlib==3.11.2
+numpy==2.5.4
+pandas==3.0.6
+pillow==12.3.0
+pybaseball==2.2.7
+requests==2.34.2
+tqdm==4.70.1
