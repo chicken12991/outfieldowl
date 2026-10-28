@@ -1,3 +1,4 @@
+import io
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
@@ -260,7 +261,8 @@ def plot_park(park_name, save_path, figsize=(9, 8.5)):
 
 def plot_alignment(air, fielders, title="Optimal Outfield Alignment",
                    infield=None, player_images=None, player_names=None,
-                   exp_runs_by_pos=None, save_path=None, show=True):
+                   exp_runs_by_pos=None, save_path=None, show=True,
+                   return_png=False):
     """field on the left with initial-dot markers at each fielder's spot,
     square photo cards on the right identifying each player.
     - balls flagged 'over_fence' -> black x's (uncatchable)
@@ -269,7 +271,12 @@ def plot_alignment(air, fielders, title="Optimal Outfield Alignment",
     - 'infield' dict draws the fixed infielders as squares
     - 'player_images' maps position (LF/CF/RF) -> image path
     - 'player_names' maps position -> display name (full name)
-    - 'exp_runs_by_pos' maps position -> expected-runs contribution"""
+    - 'exp_runs_by_pos' maps position -> expected-runs contribution
+    output (any combination):
+    - save_path  -> writes a .png file there (desktop app)
+    - return_png -> returns the .png as bytes in memory (cloud version)
+    - show       -> pops up a window
+    returns the png bytes if return_png=True, otherwise None."""
 
     player_images = player_images or {}
     player_names = player_names or {}
@@ -380,9 +387,17 @@ def plot_alignment(air, fielders, title="Optimal Outfield Alignment",
                   fielders, player_images, player_names,
                   exp_runs_by_pos)
 
+    # ---- output ----
+    png = None
+    if return_png:
+        # write the png into a buffer in memory instead of a file
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+        png = buf.getvalue()
     if save_path is not None:
         fig.savefig(save_path, dpi=150, bbox_inches='tight')
         print(f"saved plot to {save_path}")
     if show:
         plt.show()
     plt.close(fig)
+    return png
