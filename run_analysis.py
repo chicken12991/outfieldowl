@@ -1,13 +1,12 @@
 import os
 import numpy as np
 import pandas as pd
-from batted_balls import get_air_balls, get_player_id
-from fielders import add_catch_columns, DEFAULT_INFIELD
+from batted_balls import get_player_id
+from fielders import DEFAULT_INFIELD
 from fielder_data import load_fielder_ability, load_runner_times
-from optimizer import (optimize_positions, wall_distance,
-                       per_ball_expected_runs, infield_catchable,
-                       set_park, current_park,
-                       MODE_MIN_RUNS, MODE_PREVENT_HIT)
+from optimizer import set_park, current_park, \
+    MODE_MIN_RUNS, MODE_PREVENT_HIT
+from engine import prepare_batter, analyze_prepared
 from field_plot import plot_alignment
 
 pd.set_option('display.max_rows', None)
@@ -79,6 +78,9 @@ def analyze_batter(last_name, first_name, mode, abilities,
                    players=None, center_player=None):
     """one batter = one full analysis + saved plot, scored under 'mode',
     in whatever park optimizer.set_park() last chose.
+    calls the two halves in engine.py:
+      prepare_batter   -> savant pull + hang-time physics
+      analyze_prepared -> homers/infield outs for this park + optimizer
     players / center_player default to the module-level config so the
     CLI keeps working; the GUI passes its own selections.
     returns the saved plot's path (or None if skipped)."""
@@ -88,10 +90,9 @@ def analyze_batter(last_name, first_name, mode, abilities,
             and CENTER_PLAYER in players:
         center_player = CENTER_PLAYER
 
-    park_key, park_name = current_park()
-
+    # ---- half 1: savant + physics (no choices involved) ----
     batter_id = get_player_id(last_name, first_name)
-    air = get_air_balls(batter_id, start_dt=START_DT, end_dt=END_DT)
+    air = prepare_batter(batter_id, START_DT, END_DT)
 
     if len(air) == 0:
         print(f"no air balls found for {first_name} {last_name}, skipping")
@@ -100,41 +101,27 @@ def analyze_batter(last_name, first_name, mode, abilities,
     # THIS batter's speed out of the box - the race is against them
     runner_times = load_runner_times(last_name, first_name, year=2026)
 
-    # flag balls the outfield doesn't have to worry about
-    spray_angle = np.degrees(np.arctan2(air['landing_x'],
-                                        air['landing_y']))
-    landing_dist = np.hypot(air['landing_x'], air['landing_y'])
-    air['over_fence'] = landing_dist > wall_distance(spray_angle)
-    air['infield_out'] = infield_catchable(air, DEFAULT_INFIELD)
+    # ---- half 2: park + fielders + mode ----
+    result = analyze_prepared(air, players, abilities,
+                              park=current_park()[0], mode=mode,
+                              runner_times=runner_times,
+                              center_player=center_player)
 
-    all_balls = air.copy()
-    of_air = air[~air['over_fence'] & ~air['infield_out']].copy()
-
-    print(f"\nballs going into optimizer: {len(of_air)} ({park_name})")
-    best_fielders, assignment, score, coverage = optimize_positions(
-        of_air, players, abilities, center_player=center_player,
-        mode=mode, runner_times=runner_times)
+    best_fielders = result['fielders']
+    assignment = result['assignment']
+    score = result['score']
+    all_balls = result['balls']
+    park_key, park_name = result['park_key'], result['park_name']
 
     score_label = MODE_SCORE_LABELS[mode]
+    print(f"\nballs the outfield had to handle: {result['n_of_balls']} "
+          f"({park_name})")
     print(f"--- {first_name.title()} {last_name.title()}: "
           f"optimal alignment ({MODE_LABELS[mode]}, {park_name}) ---")
     for pos, (x, y) in best_fielders.items():
         print(f"{pos} ({assignment[pos]}): x={x:.0f} ft, y={y:.0f} ft "
               f"({np.hypot(x, y):.0f} ft from home)")
-    print(f"{score_label}: {score:.2f} over {len(of_air)} balls")
-
-    # catch prob + per-ball score at the optimized alignment
-    abilities_by_pos = {pos: abilities[assignment[pos]]
-                        for pos in best_fielders}
-
-    all_balls = add_catch_columns(all_balls, fielders=best_fielders,
-                                  abilities=abilities_by_pos)
-    all_balls['exp_runs'] = per_ball_expected_runs(
-        all_balls, best_fielders, abilities_by_pos, mode=mode,
-        runner_times=runner_times)
-    all_balls.loc[all_balls['over_fence'], 'catch_prob'] = 0
-    all_balls.loc[all_balls['over_fence'], 'exp_runs'] = 0
-    all_balls.loc[all_balls['infield_out'], 'exp_runs'] = 0
+    print(f"{score_label}: {score:.2f} over {result['n_of_balls']} balls")
 
     # plot, saved to plots/, no popup window
     player_names = {pos: assignment[pos] for pos in best_fielders}
