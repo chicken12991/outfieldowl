@@ -73,20 +73,19 @@ def load_fielder_ability(names, year=2026):
     return ability
 
 
-def load_runner_times(last_name, first_name, year=2026):
+def load_runner_times(player_id, year=2026, label=None):
     """runner times (contact -> 2B, contact -> 3B) for one batter,
     built from THEIR statcast sprint_speed + hp_to_1b.
+    looked up by mlbam player ID, so name spelling never matters.
+    'label' is only used in printed messages (e.g. 'Luis Arraez').
     returns (t_2b, t_3b) in seconds.
     fallbacks, in order:
       - hp_to_1b missing -> estimated as 90/sprint + pad
-      - batter not on the leaderboard at all -> league-average runner
-    matching ignores case AND accents, so 'arraez' finds 'Arráez'."""
+      - batter not on the leaderboard at all -> league-average runner"""
+    who = label or f"player {player_id}"
 
     speed = statcast_sprint_speed(year, 0)
-
-    savant_name = plain_name(f"{last_name}, {first_name}")
-    speed_keys = speed['last_name, first_name'].map(plain_name)
-    row = speed[speed_keys == savant_name]
+    row = speed[speed['player_id'] == int(player_id)]
 
     sprint = DEFAULT_RUNNER['sprint_speed']
     hp1b = DEFAULT_RUNNER['hp_to_1b']
@@ -100,16 +99,16 @@ def load_runner_times(last_name, first_name, year=2026):
             hp1b = float(h)
         else:
             hp1b = 90.0 / sprint + HP1B_FALLBACK_PAD
-            print(f"note: no hp_to_1b for {first_name} {last_name}, "
+            print(f"note: no hp_to_1b for {who}, "
                   f"estimating {hp1b:.2f}s from sprint speed")
     else:
-        print(f"note: {first_name} {last_name} not on sprint speed "
-              f"leaderboard, using league-average runner")
+        print(f"note: {who} not on sprint speed leaderboard, "
+              f"using league-average runner")
 
     t_2b = hp1b + EXTRA_DIST_2B / sprint
     t_3b = hp1b + EXTRA_DIST_3B / sprint
 
-    print(f"runner model for {first_name} {last_name}: "
+    print(f"runner model for {who}: "
           f"sprint {sprint:.1f} ft/s, hp->1B {hp1b:.2f}s "
           f"-> 2B {t_2b:.2f}s, 3B {t_3b:.2f}s")
     return t_2b, t_3b

@@ -98,8 +98,8 @@ def analyze_batter(last_name, first_name, mode, abilities,
         print(f"no air balls found for {first_name} {last_name}, skipping")
         return None
 
-    # THIS batter's speed out of the box - the race is against them
-    runner_times = load_runner_times(last_name, first_name, year=2026)
+    runner_times = load_runner_times(batter_id, year=2026,
+                                     label=f"{first_name} {last_name}")
 
     # ---- half 2: park + fielders + mode ----
     result = analyze_prepared(air, players, abilities,
