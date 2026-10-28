@@ -1,3 +1,4 @@
+import unicodedata
 import numpy as np
 from pybaseball import statcast_outfielder_jump, statcast_sprint_speed
 
@@ -18,6 +19,19 @@ HP1B_FALLBACK_PAD = 1.05 # est. hp_to_1b = 90/sprint + this, seconds
 DEFAULT_RUNNER = {'sprint_speed': 27.0, 'hp_to_1b': 4.4}
 
 
+# ---------------------------------------------------------
+# NAME CLEANUP
+# ---------------------------------------------------------
+
+def plain_name(s):
+    """lowercase, accents removed, extra spaces trimmed.
+    'Arráez, Luis' -> 'arraez, luis'. used on BOTH sides of every
+    name comparison so typed names and savant names always match."""
+    s = unicodedata.normalize('NFKD', str(s))
+    s = ''.join(c for c in s if not unicodedata.combining(c))
+    return ' '.join(s.lower().split())
+
+
 def load_fielder_ability(names, year=2026):
     """pull statcast jump + sprint speed for the given player names.
     returns {name: {'bootup_feet', 'sprint_speed'}}.
@@ -30,21 +44,24 @@ def load_fielder_ability(names, year=2026):
     jump = statcast_outfielder_jump(year)
     speed = statcast_sprint_speed(year, 0)   # 0 = no min opportunities
 
+    jump_keys = jump['last_name, first_name'].map(plain_name)
+    speed_keys = speed['last_name, first_name'].map(plain_name)
+
     ability = {}
     for name in names:
         parts = name.split()
-        savant_name = f"{parts[-1]}, {parts[0]}"   # "Wood, James"
+        savant_name = plain_name(f"{parts[-1]}, {parts[0]}")  # "wood, james"
 
         entry = dict(DEFAULT_ABILITY)
 
-        jrow = jump[jump['last_name, first_name'] == savant_name]
+        jrow = jump[jump_keys == savant_name]
         if not jrow.empty:
             entry['bootup_feet'] = float(jrow['f_bootup_distance'].iloc[0])
         else:
             print(f"note: {name} not on jump leaderboard, "
                   f"using league-average bootup")
 
-        srow = speed[speed['last_name, first_name'] == savant_name]
+        srow = speed[speed_keys == savant_name]
         if not srow.empty:
             entry['sprint_speed'] = float(srow['sprint_speed'].iloc[0])
         else:
@@ -63,12 +80,13 @@ def load_runner_times(last_name, first_name, year=2026):
     fallbacks, in order:
       - hp_to_1b missing -> estimated as 90/sprint + pad
       - batter not on the leaderboard at all -> league-average runner
-    matching is case-insensitive so lowercase lineup names work."""
+    matching ignores case AND accents, so 'arraez' finds 'Arráez'."""
 
     speed = statcast_sprint_speed(year, 0)
 
-    savant_name = f"{last_name}, {first_name}".lower()
-    row = speed[speed['last_name, first_name'].str.lower() == savant_name]
+    savant_name = plain_name(f"{last_name}, {first_name}")
+    speed_keys = speed['last_name, first_name'].map(plain_name)
+    row = speed[speed_keys == savant_name]
 
     sprint = DEFAULT_RUNNER['sprint_speed']
     hp1b = DEFAULT_RUNNER['hp_to_1b']

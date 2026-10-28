@@ -2,14 +2,26 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import matplotlib.patheffects as pe
+from matplotlib.figure import Figure
 from matplotlib.patches import Circle, Polygon
 from matplotlib.lines import Line2D
 
+import optimizer as _opt
 from optimizer import wall_distance
 
 GRASS_COLOR = '#4f9153'
 DIRT_COLOR = '#c98a4b'
 DIRT_EDGE = '#a06a35'
+
+
+def _park_outline():
+    """the active park's full traced outline (fair AND foul ground) in
+    feet, or None if the park is the built-in 5-corner fallback, which
+    has no foul-ground data. reads optimizer's active wall directly."""
+    key, _ = _opt.current_park()
+    if key == 'nationals_builtin' or _opt._WALL_XY is None:
+        return None
+    return _opt._WALL_XY
 
 
 def _initials(name):
@@ -94,57 +106,47 @@ def _draw_sidebar(fig, field_ax, sidebar_left, sidebar_right,
         ax.set_ylim(0, 1)
 
 
-def plot_alignment(air, fielders, title="Optimal Outfield Alignment",
-                   infield=None, player_images=None, player_names=None,
-                   exp_runs_by_pos=None, save_path=None, show=True):
-    """field on the left with initial-dot markers at each fielder's spot,
-    square photo cards on the right identifying each player.
-    - balls flagged 'over_fence' -> black x's (uncatchable)
-    - balls flagged 'infield_out' -> gray dots (removed from OF problem)
-    - if an 'exp_runs' column exists, in-play OF balls get labeled
-    - 'infield' dict draws the fixed infielders as squares
-    - 'player_images' maps position (LF/CF/RF) -> image path
-    - 'player_names' maps position -> display name (full name)
-    - 'exp_runs_by_pos' maps position -> expected-runs contribution"""
-
-    player_images = player_images or {}
-    player_names = player_names or {}
-
-    fig = plt.figure(figsize=(13, 9))
-    # field on the left; sidebar drawn manually in the right margin
-    ax = fig.add_axes([0.06, 0.08, 0.62, 0.84])
-
-    # match the field's frame to the sidebar borders
-    for spine in ax.spines.values():
-        spine.set_linewidth(1.8)
-
-    # ---- field outline ----
+def _draw_field(ax):
+    """the empty field for the ACTIVE park: grass, dirt, bases, mound,
+    wall, foul lines, distance rings and spokes. shared by the real
+    plots and the park preview so they always look identical."""
     angles = np.linspace(-45, 45, 721)
     rad = np.radians(angles)
 
-    # ---- turf: grass fill, widened past the foul lines into foul ground ----
-    # the foul-ground edge runs parallel to each foul line (fixed perpendicular
-    # width), rather than at a fixed angle from home plate.
-    FOUL_WIDTH = 24   # ft, width of the foul-ground strip alongside each line
     line_r_l, line_r_r = wall_distance(-45), wall_distance(45)
     u_l = np.array([np.sin(np.radians(-45)), np.cos(np.radians(-45))])
     u_r = np.array([np.sin(np.radians(45)),  np.cos(np.radians(45))])
-    out_l = np.array([-1, -1]) / np.sqrt(2)   # outward normal, left line
-    out_r = np.array([ 1, -1]) / np.sqrt(2)   # outward normal, right line
 
-    left_home    = FOUL_WIDTH * out_l
-    left_corner  = line_r_l * u_l + FOUL_WIDTH * out_l
-    right_corner = line_r_r * u_r + FOUL_WIDTH * out_r
-    right_home   = FOUL_WIDTH * out_r
+    outline = _park_outline()
+    if outline is not None:
+        # ---- real park: grass fills the traced outline, which covers
+        # fair AND foul ground; the outline itself is the wall ----
+        ax.fill(outline[:, 0], outline[:, 1], color=GRASS_COLOR, zorder=0)
+        loop = np.vstack([outline, outline[:1]])    # close the loop
+        boundary_x, boundary_y = loop[:, 0], loop[:, 1]
+    else:
+        # ---- built-in fallback: fixed-width foul strip parallel to
+        # each foul line (no real foul-ground data for this park) ----
+        FOUL_WIDTH = 24   # ft, width of the foul-ground strip
+        out_l = np.array([-1, -1]) / np.sqrt(2)   # outward normal, left
+        out_r = np.array([ 1, -1]) / np.sqrt(2)   # outward normal, right
 
-    arc_x = wall_distance(angles) * np.sin(rad)
-    arc_y = wall_distance(angles) * np.cos(rad)
+        left_home    = FOUL_WIDTH * out_l
+        left_corner  = line_r_l * u_l + FOUL_WIDTH * out_l
+        right_corner = line_r_r * u_r + FOUL_WIDTH * out_r
+        right_home   = FOUL_WIDTH * out_r
 
-    wedge_x = np.concatenate([[left_home[0], left_corner[0]], arc_x,
-                              [right_corner[0], right_home[0]]])
-    wedge_y = np.concatenate([[left_home[1], left_corner[1]], arc_y,
-                              [right_corner[1], right_home[1]]])
-    ax.fill(wedge_x, wedge_y, color=GRASS_COLOR, zorder=0)
+        arc_x = wall_distance(angles) * np.sin(rad)
+        arc_y = wall_distance(angles) * np.cos(rad)
+
+        wedge_x = np.concatenate([[left_home[0], left_corner[0]], arc_x,
+                                  [right_corner[0], right_home[0]]])
+        wedge_y = np.concatenate([[left_home[1], left_corner[1]], arc_y,
+                                  [right_corner[1], right_home[1]]])
+        ax.fill(wedge_x, wedge_y, color=GRASS_COLOR, zorder=0)
+
+        boundary_x = np.concatenate([wedge_x, [left_home[0]]])
+        boundary_y = np.concatenate([wedge_y, [left_home[1]]])
 
     # ---- infield dirt skin: 95-ft circle on the mound, clipped so it
     # continues past each foul line in line with the basepath lanes,
@@ -191,11 +193,8 @@ def plot_alignment(air, fielders, title="Optimal Outfield Alignment",
     ax.scatter([b, 0, -b], [b, 2*b, b], s=40, color='white',
                edgecolor='black', linewidth=0.8, marker='s', zorder=4)
 
-    # outfield wall + foul-ground edge (parallel to the lines), closed loop
-    boundary_x = np.concatenate([[left_home[0], left_corner[0]], arc_x,
-                                 [right_corner[0], right_home[0], left_home[0]]])
-    boundary_y = np.concatenate([[left_home[1], left_corner[1]], arc_y,
-                                 [right_corner[1], right_home[1], left_home[1]]])
+    # outer boundary: the wall all the way around (real park) or the
+    # wall + fixed foul strip (fallback)
     ax.plot(boundary_x, boundary_y, color='black', linewidth=2, zorder=2)
 
     # foul lines from home plate to the wall corners - outlined in black so
@@ -235,6 +234,56 @@ def plot_alignment(air, fielders, title="Optimal Outfield Alignment",
         ax.plot([0, r * np.sin(spoke_rad)], [0, r * np.cos(spoke_rad)],
                 color='white', linewidth=0.6, linestyle=':',
                 alpha=0.5, zorder=1)
+
+
+def plot_park(park_name, save_path, figsize=(9, 8.5)):
+    """the empty ACTIVE park - no balls, no fielders. used as the GUI
+    preview before any plots exist. save_path can be a file path or a
+    file-like object (io.BytesIO). uses a bare Figure (no pyplot) so
+    it's safe to call from the GUI thread."""
+    fig = Figure(figsize=figsize)
+    ax = fig.add_axes([0.03, 0.03, 0.94, 0.86])
+    _draw_field(ax)
+
+    lf, cf, rf = (float(wall_distance(a)) for a in (-45, 0, 45))
+    ax.set_title(f"{park_name}\n"
+                 f"LF line {lf:.0f} ft  ·  CF {cf:.0f} ft  ·  "
+                 f"RF line {rf:.0f} ft")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_aspect('equal')
+
+    fig.savefig(save_path, format='png', dpi=100, bbox_inches='tight')
+
+
+def plot_alignment(air, fielders, title="Optimal Outfield Alignment",
+                   infield=None, player_images=None, player_names=None,
+                   exp_runs_by_pos=None, save_path=None, show=True):
+    """field on the left with initial-dot markers at each fielder's spot,
+    square photo cards on the right identifying each player.
+    - balls flagged 'over_fence' -> black x's (uncatchable)
+    - balls flagged 'infield_out' -> gray dots (removed from OF problem)
+    - if an 'exp_runs' column exists, in-play OF balls get labeled
+    - 'infield' dict draws the fixed infielders as squares
+    - 'player_images' maps position (LF/CF/RF) -> image path
+    - 'player_names' maps position -> display name (full name)
+    - 'exp_runs_by_pos' maps position -> expected-runs contribution"""
+
+    player_images = player_images or {}
+    player_names = player_names or {}
+
+    fig = plt.figure(figsize=(13, 9))
+    # field on the left; sidebar drawn manually in the right margin
+    ax = fig.add_axes([0.06, 0.08, 0.62, 0.84])
+
+    # match the field's frame to the sidebar borders
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.8)
+
+    # ---- the field itself (active park) ----
+    _draw_field(ax)
 
     # ---- ball category masks ----
     over = air['over_fence'] if 'over_fence' in air.columns \

@@ -1,4 +1,7 @@
+import os
 import numpy as np
+import pandas as pd
+import pybaseball
 from itertools import permutations
 from tqdm import tqdm
 
@@ -46,14 +49,24 @@ MODE_PREVENT_HIT = 'prevent_hit'
 
 
 # ---------------------------------------------------------
-# PARK DIMENSIONS - Nationals Park
+# PARK DIMENSIONS
 # ---------------------------------------------------------
+# wall outlines come from pybaseball's mlbstadiums.csv (originally from
+# the GeomMLBStadiums project, traced ~2023). points are in statcast
+# hc_x / hc_y coordinates, converted to feet exactly like batted balls.
+# the 'outfield_outer' segment loops around the whole field; the ray
+# cast only shoots rays between the foul lines, so it only ever hits
+# the outfield wall part.
 
-def _polar_to_xy(angle_deg, dist):
-    a = np.radians(angle_deg)
-    return dist * np.sin(a), dist * np.cos(a)
+PARK_CSV = os.path.join(os.path.dirname(pybaseball.__file__),
+                        'data', 'mlbstadiums.csv')
+DEFAULT_PARK = 'nationals'
 
-_WALL_CORNERS = [
+# hc_x / hc_y -> feet (same constants as batted_balls.py)
+_HC_SCALE, _HC_X0, _HC_Y0 = 2.5, 125.42, 198.27
+
+# built-in fallback if the csv can't be read: hand-entered Nationals Park
+_FALLBACK_CORNERS = [
     (-45.0, 337.0),   # LF foul pole
     (-22.5, 377.0),   # left-center corner
     (  0.0, 402.0),   # dead center corner
@@ -61,14 +74,17 @@ _WALL_CORNERS = [
     ( 45.0, 335.0),   # RF foul pole
 ]
 
-_WALL_XY = np.array([_polar_to_xy(a, d) for a, d in _WALL_CORNERS])
+
+def _polar_to_xy(angle_deg, dist):
+    a = np.radians(angle_deg)
+    return dist * np.sin(a), dist * np.cos(a)
 
 
-def _ray_cast(angle_deg):
+def _ray_cast(angle_deg, wall_xy):
     """distance from home plate to the wall polyline along one ray."""
     dx, dy = np.sin(np.radians(angle_deg)), np.cos(np.radians(angle_deg))
     best = np.inf
-    for (x1, y1), (x2, y2) in zip(_WALL_XY[:-1], _WALL_XY[1:]):
+    for (x1, y1), (x2, y2) in zip(wall_xy[:-1], wall_xy[1:]):
         sx, sy = x2 - x1, y2 - y1
         denom = dx * sy - dy * sx
         if abs(denom) < 1e-12:
@@ -81,17 +97,112 @@ def _ray_cast(angle_deg):
 
 
 _LOOKUP_ANGLES = np.linspace(-45.0, 45.0, 361)
-_LOOKUP_DISTS = np.array([_ray_cast(a) for a in _LOOKUP_ANGLES])
-if not np.isfinite(_LOOKUP_DISTS).all():
-    good = np.isfinite(_LOOKUP_DISTS)
-    _LOOKUP_DISTS = np.interp(_LOOKUP_ANGLES,
-                              _LOOKUP_ANGLES[good], _LOOKUP_DISTS[good])
+
+
+def _build_lookup(wall_xy):
+    """wall distance at every lookup angle, or None if the outline
+    is unusable (no ray hits it)."""
+    dists = np.array([_ray_cast(a, wall_xy) for a in _LOOKUP_ANGLES])
+    good = np.isfinite(dists)
+    if not good.any():
+        return None
+    if not good.all():
+        dists = np.interp(_LOOKUP_ANGLES, _LOOKUP_ANGLES[good],
+                          dists[good])
+    return dists
+
+
+_park_table = None
+
+
+def _load_park_table():
+    """read mlbstadiums.csv once and keep it."""
+    global _park_table
+    if _park_table is None:
+        try:
+            _park_table = pd.read_csv(PARK_CSV)
+        except Exception as e:
+            print(f"warning: couldn't read park file ({e}), "
+                  f"only the built-in Nationals Park is available")
+            _park_table = pd.DataFrame(
+                columns=['team', 'x', 'y', 'segment', 'name'])
+    return _park_table
+
+
+def list_parks():
+    """{display name: team key} for every park, sorted by name."""
+    table = _load_park_table()
+    parks = {}
+    for team, grp in table.groupby('team'):
+        if team == 'generic':
+            label = 'Generic park'
+        else:
+            names = grp['name'].dropna()
+            label = str(names.iloc[0]) if len(names) \
+                else team.replace('_', ' ').title()
+        parks[label] = team
+    if not parks:
+        parks['Nationals Park'] = DEFAULT_PARK
+    return dict(sorted(parks.items()))
+
+
+def _park_wall_xy(team):
+    """outer wall outline for one team, in feet. None if missing."""
+    table = _load_park_table()
+    rows = table[(table['team'] == team)
+                 & (table['segment'] == 'outfield_outer')]
+    if rows.empty:
+        return None
+    x = _HC_SCALE * (rows['x'].to_numpy(dtype=float) - _HC_X0)
+    y = _HC_SCALE * (_HC_Y0 - rows['y'].to_numpy(dtype=float))
+    return np.column_stack([x, y])
+
+
+# the active park - set_park() swaps these
+_WALL_XY = None
+_LOOKUP_DISTS = None
+_CURRENT_PARK = None
+_CURRENT_PARK_NAME = None
+
+
+def set_park(team):
+    """make 'team' (e.g. 'nationals', 'red_sox') the active park.
+    everything that asks for the wall uses it from now on."""
+    global _WALL_XY, _LOOKUP_DISTS, _CURRENT_PARK, _CURRENT_PARK_NAME
+
+    wall = _park_wall_xy(team)
+    dists = _build_lookup(wall) if wall is not None else None
+
+    if dists is None:
+        print(f"warning: no usable wall outline for '{team}', "
+              f"using built-in Nationals Park")
+        wall = np.array([_polar_to_xy(a, d)
+                         for a, d in _FALLBACK_CORNERS])
+        dists = _build_lookup(wall)
+        team, name = 'nationals_builtin', 'Nationals Park (built-in)'
+    else:
+        name = next((label for label, key in list_parks().items()
+                     if key == team), team)
+
+    _WALL_XY = wall
+    _LOOKUP_DISTS = dists
+    _CURRENT_PARK = team
+    _CURRENT_PARK_NAME = name
+
+
+def current_park():
+    """(team key, display name) of the active park."""
+    return _CURRENT_PARK, _CURRENT_PARK_NAME
 
 
 def wall_distance(angle_deg):
-    """wall depth at a given spray angle. scalars or arrays."""
+    """wall depth at a given spray angle, active park. scalars or arrays."""
     angle_deg = np.asarray(angle_deg, dtype=float)
     return np.interp(angle_deg, _LOOKUP_ANGLES, _LOOKUP_DISTS)
+
+
+# start on the default park so everything works right after import
+set_park(DEFAULT_PARK)
 
 
 # ---------------------------------------------------------
@@ -99,7 +210,7 @@ def wall_distance(angle_deg):
 # ---------------------------------------------------------
 
 def build_grid(spacing=GRID_SPACING):
-    """every legal outfield position on a grid."""
+    """every legal outfield position on a grid (active park)."""
     max_r = _LOOKUP_DISTS.max()
     xs = np.arange(-max_r, max_r + spacing, spacing)
     ys = np.arange(0.0, max_r + spacing, spacing)

@@ -1,6 +1,8 @@
-from pybaseball import statcast_batter, playerid_lookup
+from pybaseball import statcast_batter, playerid_lookup, chadwick_register
 import numpy as np
 import pandas as pd
+
+from fielder_data import plain_name
 
 
 # ---------------------------------------------------------
@@ -55,14 +57,38 @@ def _solve_cd(v0_mph, angle_deg, actual_dist):
 # ID LOOKUP
 # ---------------------------------------------------------
 
+def _squash(s):
+    """plain_name, then drop periods and spaces too.
+    'J. T.' -> 'jt', 'Arráez' -> 'arraez'."""
+    return plain_name(s).replace('.', '').replace(' ', '')
+
+
 def get_player_id(last_name, first_name):
     """look up a player's mlbam id by name.
+    1) normal pybaseball lookup with accents stripped
+    2) if that finds nobody, search the whole chadwick register,
+       comparing names with accents, periods and spaces removed
+       (so 'Arraez' finds 'Arráez' and 'JT' finds 'J. T.')
     if there are multiple matches, uses the most recent player."""
-    lookup = playerid_lookup(last_name, first_name)
+    lookup = playerid_lookup(plain_name(last_name), plain_name(first_name))
+
+    if lookup.empty:
+        reg = chadwick_register()
+        lasts = reg['name_last'].fillna('').map(_squash)
+        firsts = reg['name_first'].fillna('').map(_squash)
+        lookup = reg[(lasts == _squash(last_name))
+                     & (firsts == _squash(first_name))]
+        # keep only rows that actually have an mlbam id
+        lookup = lookup[lookup['key_mlbam'].fillna(-1) > 0]
+        if not lookup.empty:
+            print(f"note: found {first_name} {last_name} with the "
+                  f"backup name search")
+
     if lookup.empty:
         raise ValueError(f"no player found for {first_name} {last_name}")
     if len(lookup) > 1:
-        lookup = lookup.sort_values('mlb_played_first', ascending=False)
+        lookup = lookup.sort_values('mlb_played_first', ascending=False,
+                                    na_position='last')
         print(f"warning: multiple matches for {first_name} {last_name}, "
               f"using most recent (mlbam id {lookup.iloc[0]['key_mlbam']})")
     return int(lookup.iloc[0]['key_mlbam'])
